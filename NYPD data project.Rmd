@@ -1,0 +1,124 @@
+---
+title: "NYPD data project"
+output: github_document
+date: "2022-11-03"
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r packages}
+library(tidyverse)
+library(lubridate)
+library(tibble)
+```
+
+# Getting data
+```{r get_data}
+url_data <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+# Reading the data
+```{r import}
+nypd_data <- read.csv(url_data)
+```
+# Tidying the data
+```{r tidy_nypd_data}
+summary(nypd_data)
+nypd_data <- nypd_data %>%
+  select(OCCUR_DATE:VIC_RACE) %>%
+  select(-c(PRECINCT:LOCATION_DESC)) %>%
+  select(-c(PERP_SEX, PERP_RACE, VIC_SEX, VIC_RACE))
+nypd_data <- nypd_data %>% filter(PERP_AGE_GROUP > 0)
+nypd_data <- nypd_data %>% filter(VIC_AGE_GROUP > 0)
+nypd_data$STATISTICAL_MURDER_FLAG <- replace(nypd_data$STATISTICAL_MURDER_FLAG, nypd_data$STATISTICAL_MURDER_FLAG == 'true', 1)
+nypd_data$STATISTICAL_MURDER_FLAG <- replace(nypd_data$STATISTICAL_MURDER_FLAG, nypd_data$STATISTICAL_MURDER_FLAG == 'false', 0)
+nypd_data <- nypd_data %>%
+  rename(death = 'STATISTICAL_MURDER_FLAG',
+         date = 'OCCUR_DATE',
+         time = 'OCCUR_TIME')
+nypd_data$death <- as.double(nypd_data$death)
+nypd_data <- nypd_data %>%
+  mutate(date = mdy(date)) %>%
+  mutate(shooting = 1)
+nypd_data <- nypd_data[(nypd_data$PERP_AGE_GROUP != "1020" & nypd_data$PERP_AGE_GROUP != "224" & nypd_data$PERP_AGE_GROUP != "940" & nypd_data$PERP_AGE_GROUP != "UNKNOWN"), ]
+nypd_data <- nypd_data[(nypd_data$VIC_AGE_GROUP != "UNKNOWN"), ]
+nypd_data <- nypd_data %>%
+  mutate(month = month(date), year = year(date))
+summary(nypd_data)
+all_shootings = sum(nypd_data$shooting)
+all_death = sum(nypd_data$death)
+partial = all_death / all_shootings
+partial
+```
+# Visualizing and Analyzing the data
+```{r visualizing_nypd_data}
+shootings_by_BORO <- nypd_data %>%
+  group_by(BORO) %>%
+  summarize(death = sum(death), shooting = sum(shooting)) %>%
+  mutate(percentage = (death / shooting) * 100) %>%
+  ungroup()
+shootings_by_BORO %>%
+  ggplot(aes(x = BORO, y = shooting)) + geom_bar(stat = "identity")
+shootings_by_perp_age <- nypd_data %>%
+  group_by(PERP_AGE_GROUP) %>%
+  summarize(death = sum(death), shooting = sum(shooting)) %>%
+  mutate(percentage = (death / shooting) * 100) %>%
+  ungroup()
+shootings_by_perp_age %>%
+  ggplot(aes(x = PERP_AGE_GROUP, y = shooting)) + geom_bar(stat = "identity")
+shootings_by_vic_age<- nypd_data %>%
+  group_by(VIC_AGE_GROUP) %>%
+  summarize(death = sum(death), shooting = sum(shooting)) %>%
+  mutate(percentage = (death / shooting) * 100) %>%
+  ungroup()
+shootings_by_vic_age %>%
+  ggplot(aes(x = VIC_AGE_GROUP, y = shooting)) + geom_bar(stat = "identity")
+shootings_by_date <- nypd_data %>%
+  group_by(date) %>%
+  summarize(death = sum(death), shooting = sum(shooting)) %>%
+  mutate(percentage = (death / shooting) * 100) %>%
+  ungroup()
+shootings_by_date %>%
+  ggplot(aes(x = date, y = shooting)) + geom_point(aes(color = "shooting")) + geom_point(aes(y = death, color = "death")) + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "NYPD data", y = NULL)
+shootings_by_year <- nypd_data %>%
+  group_by(year) %>%
+  summarize(death = sum(death), shooting = sum(shooting)) %>%
+  mutate(percentage = (death / shooting) * 100) %>%
+  ungroup()
+shootings_by_year %>%
+  ggplot(aes(x = year, y = shooting, fill = death)) + geom_bar(stat = "identity") +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "NYPD data", y = NULL)
+shootings_by_year %>%
+  ggplot(aes(x = year, y = percentage)) + geom_line(aes(color = "percentage")) + geom_point(aes(color = "percentage")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "NYPD data", y = NULL)
+shootings_by_month <- nypd_data %>%
+  group_by(month) %>%
+  summarize(death = sum(death), shooting = sum(shooting)) %>%
+  mutate(percentage = (death / shooting) * 100) %>%
+  ungroup()
+all_shootings = sum(shootings_by_month$shooting)
+shootings_by_month <- shootings_by_month %>%
+  mutate(part_of_whole = shooting / all_shootings)
+shootings_by_month
+pie(shootings_by_month$part_of_whole)
+```
+From the analysis, months May, June, July and August have higher number of shootings than other months. How and why this is the case is an interesting question.
+
+# Modeling the data
+Predicting number of deaths with month and shooting number as independent variables.
+```{r Modeling_nypd_data}
+mod1 <- lm(death ~ BORO + PERP_AGE_GROUP + VIC_AGE_GROUP + year + month, data = nypd_data)
+mod2 <- lm(death ~ BORO + PERP_AGE_GROUP + VIC_AGE_GROUP, data = nypd_data)
+summary(mod1)
+summary(mod2)
+mod3 <- glm(death ~ BORO + PERP_AGE_GROUP + VIC_AGE_GROUP + year + month, data = nypd_data, family = "binomial")
+summary(mod3)
+mod4 <- glm(death ~ BORO + PERP_AGE_GROUP + VIC_AGE_GROUP, data = nypd_data, family = "binomial")
+summary(mod4)
+```
+From the first regression, I see that the coefficients for year and month are not statistically significant, so I drop them and do another regression with the other variables. Then I do a logistic regression. I conclude that boroughs, perpetrator age groups and victim age groups are statistically significant variables when predicting if there is a death that results from a shooting incident in NYC. There may be a bias because there could be other important variables that have been omitted in this analysis.
